@@ -213,7 +213,7 @@ import System.FilePath
 import UnliftIO.Exception
     ( Exception, throwIO )
 import UnliftIO.MVar
-    ( modifyMVar, modifyMVar_, newMVar, readMVar )
+    ( MVar, modifyMVar, modifyMVar_, newMVar, readMVar )
 
 import qualified Cardano.Wallet.Primitive.AddressDerivation as W
 import qualified Cardano.Wallet.Primitive.AddressDiscovery.Random as Rnd
@@ -1116,42 +1116,56 @@ newDBLayerWith cacheBehavior ti SqliteContext{runQuery} = do
     -- When 'cacheBehavior' is set to 'NoCache', we simply never write anything
     -- to the cache, which forces 'selectLatestCheckpointCached' to always perform a
     -- database lookup.
-    cache <- newMVar Map.empty
+    --
+    -- NOTE3
+    -- Nested MVars provide per-wallet locking when updating the checkpoint
+    -- cache.
+    --
+    cacheVar <- newMVar Map.empty :: IO (MVar (Map W.WalletId (MVar (Maybe (W.Wallet s)))))
 
-    let readCache :: W.WalletId -> SqlPersistT IO (Maybe (W.Wallet s))
-        readCache wid = Map.lookup wid <$> readMVar cache
+    -- Gets or creates the cache MVar for a given wallet.
+    let getCache :: W.WalletId -> SqlPersistT IO (MVar (Maybe (W.Wallet s)))
+        getCache wid = modifyMVar cacheVar $ \cache -> do
+            mvar <- maybe (newMVar Nothing) pure $ Map.lookup wid cache
+            let cache' = case cacheBehavior of
+                    NoCache -> cache -- stick to initial value
+                    CacheLatestCheckpoint -> Map.insert wid mvar cache
+            pure (cache', mvar)
 
-    let maybeUpdateCache m = case cacheBehavior of
-            NoCache -> pure ()
-            CacheLatestCheckpoint -> modifyMVar_ cache (pure . m)
-
-        writeCache :: W.WalletId -> Maybe (W.Wallet s) -> SqlPersistT IO ()
-        writeCache wid = maybeUpdateCache . flip Map.alter wid . maybe (const Nothing) alterCache
-
-        alterCache :: W.Wallet s -> (Maybe (W.Wallet s) -> Maybe (W.Wallet s))
+    -- This condition is required to make property tests pass, where checkpoints
+    -- may be generated in any order.
+    let alterCache :: W.Wallet s -> Maybe (W.Wallet s) -> Maybe (W.Wallet s)
         alterCache cp = \case
-            -- this seems suspicious
             Just old | getHeight cp < getHeight old -> Just old
             _ -> Just cp
 
         getHeight = view (#currentTip . #blockHeight)
 
+    -- Inserts a checkpoint into the database and checkpoint cache
+    let insertCheckpointCached wid cp = do
+            mvar <- getCache wid
+            modifyMVar_ mvar $ \old -> do
+                insertCheckpoint wid cp
+                pure (alterCache cp old)
+
+    -- Checks for cached a checkpoint before running selectLatestCheckpoint
     let selectLatestCheckpointCached
             :: W.WalletId
             -> SqlPersistT IO (Maybe (W.Wallet s))
         selectLatestCheckpointCached wid = do
-            readCache wid >>= maybe (selectLatestCheckpoint @s wid) (pure . Just)
+            cp <- readMVar =<< getCache wid
+            maybe (selectLatestCheckpoint @s wid) (pure . Just) cp
 
-    -- fixme: not threadsafe
-    let invalidateCache :: W.WalletId -> SqlPersistT IO ()
-        invalidateCache wid = do
-            writeCache wid Nothing
-            cp <- selectLatestCheckpoint wid
-            writeCache wid cp
+    -- Re-run the selectLatestCheckpoint query
+    let refreshCache :: W.WalletId -> SqlPersistT IO ()
+        refreshCache wid = do
+            mvar <- getCache wid
+            modifyMVar_ mvar $ const $
+                selectLatestCheckpoint @s wid
 
-    -- fixme: not threadsafe
-    let insertCheckpointCached wid cp =
-            writeCache wid (Just cp) *> insertCheckpoint wid cp
+    -- Delete the cache for a wallet
+    let dropCache :: W.WalletId -> SqlPersistT IO ()
+        dropCache wid = modifyMVar_ cacheVar $ pure . Map.delete wid
 
     return DBLayer
 
@@ -1175,7 +1189,7 @@ newDBLayerWith cacheBehavior ti SqliteContext{runQuery} = do
                 Just _  -> Right <$> do
                     deleteCascadeWhere [WalId ==. wid]
                     deleteLooseTransactions
-                    invalidateCache wid
+                    dropCache wid
 
         , listWallets =
             map (PrimaryKey . unWalletKey) <$> selectKeysList [] [Asc WalId]
@@ -1227,7 +1241,7 @@ newDBLayerWith cacheBehavior ti SqliteContext{runQuery} = do
                     deleteStakeKeyCerts wid
                         [ StakeKeyCertSlot >. nearestPoint
                         ]
-                    invalidateCache wid
+                    refreshCache wid
                     pure (Right nearestPoint)
 
         , prune = \(PrimaryKey wid) epochStability -> ExceptT $ do
