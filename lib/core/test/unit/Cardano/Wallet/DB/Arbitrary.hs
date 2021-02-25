@@ -112,11 +112,13 @@ import Cardano.Wallet.Primitive.Types.Address
 import Cardano.Wallet.Primitive.Types.Coin
     ( Coin (..) )
 import Cardano.Wallet.Primitive.Types.Coin.Gen
-    ( genCoinLargePositive )
+    ( genCoinLargePositive, genCoinSmall )
 import Cardano.Wallet.Primitive.Types.Hash
     ( Hash (..) )
 import Cardano.Wallet.Primitive.Types.RewardAccount
     ( RewardAccount (..) )
+import Cardano.Wallet.Primitive.Types.TokenBundle
+    ( TokenBundle (..) )
 import Cardano.Wallet.Primitive.Types.TokenBundle.Gen
     ( genTokenBundleSmallRange )
 import Cardano.Wallet.Primitive.Types.Tx
@@ -141,6 +143,8 @@ import Crypto.Hash
     ( hash )
 import Data.ByteArray.Encoding
     ( Base (Base16), convertToBase )
+import Data.ByteString.Arbitrary
+    ( fastRandBs )
 import Data.Coerce
     ( coerce )
 import Data.Functor.Identity
@@ -399,7 +403,7 @@ instance Arbitrary TxIn where
 instance Arbitrary TxOut where
     arbitrary = TxOut
         <$> arbitrary
-        <*> genTokenBundleSmallRange
+        <*> (TokenBundle <$> genCoinSmall <*> pure mempty)
 
 instance Arbitrary TxMeta where
     arbitrary = do
@@ -442,8 +446,18 @@ instance (Ord a, Arbitrary a) => Arbitrary (Range a) where
                                  Address
 -------------------------------------------------------------------------------}
 
+
+twentyNineNulls :: BS.ByteString
+twentyNineNulls = "\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL"
+
+sixteenNulls :: BS.ByteString
+sixteenNulls = "\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL\NUL"
+
+sixteenNullsHex :: Hash purpose
+sixteenNullsHex = Hash . convertToBase Base16 $ sixteenNulls
+
 instance Arbitrary Address where
-    arbitrary = Address . B8.pack <$> vector 29
+    arbitrary = Address <$> pure twentyNineNulls
 
 instance Arbitrary (Index 'Soft depth) where
     shrink _ = []
@@ -662,15 +676,14 @@ instance Arbitrary DecentralizationLevel where
 
 instance Arbitrary RewardAccount where
     arbitrary =
-        RewardAccount . BS.pack <$> vector 28
+        RewardAccount <$> fastRandBs 28
 
 instance Arbitrary (Hash purpose) where
     arbitrary = do
-        Hash . convertToBase Base16 . BS.pack <$> vector 16
+        Hash . convertToBase Base16 <$> fastRandBs 16
 
 instance Arbitrary PoolId where
-    arbitrary = do
-        PoolId . convertToBase Base16 . BS.pack <$> vector 16
+    arbitrary = pure $ PoolId $ getHash sixteenNullsHex
 
 instance Arbitrary DelegationCertificate where
     arbitrary = oneof

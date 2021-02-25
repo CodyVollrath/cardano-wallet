@@ -231,8 +231,6 @@ test-suite unit
   ghc-options:
       -threaded -rtsopts
       -Wall
-      "-with-rtsopts=-M2G"
-      "-with-rtsopts=-N4"
   if (flag(release))
     ghc-options: -O2 -Werror
   build-depends:
@@ -247,6 +245,7 @@ test-suite unit
     , cardano-wallet-launcher
     , cardano-wallet-test-utils
     , cardano-slotting
+    , bytestring-arbitrary
     , cborg
     , connection
     , containers
