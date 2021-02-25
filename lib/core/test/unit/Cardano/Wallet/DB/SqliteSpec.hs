@@ -57,7 +57,7 @@ import Cardano.Wallet.DB
     , cleanDB
     )
 import Cardano.Wallet.DB.Arbitrary
-    ( KeyValPairs (..) )
+    ( GenTxHistory, KeyValPairs (..) )
 import Cardano.Wallet.DB.Properties
     ( properties )
 import Cardano.Wallet.DB.Sqlite
@@ -68,7 +68,7 @@ import Cardano.Wallet.DB.Sqlite
     , withDBLayer
     )
 import Cardano.Wallet.DB.StateMachine
-    ( prop_parallel, prop_sequential, validateGenerators )
+    ( prop_parallel, prop_sequential, validateGenerator, validateGenerators )
 import Cardano.Wallet.DummyTarget.Primitive.Types
     ( block0, dummyGenesisParameters, dummyTimeInterpreter, mockHash )
 import Cardano.Wallet.Gen
@@ -174,6 +174,8 @@ import Data.Generics.Labels
     ()
 import Data.Maybe
     ( fromMaybe, isJust, isNothing, mapMaybe )
+import Data.Proxy
+    ( Proxy (..) )
 import Data.Quantity
     ( Quantity (..) )
 import Data.Text
@@ -224,7 +226,7 @@ import Test.Hspec
 import Test.Hspec.Extra
     ( parallel )
 import Test.QuickCheck
-    ( Property, generate, property, (==>) )
+    ( Property, arbitrary, generate, property, shrink, (==>) )
 import Test.QuickCheck.Monadic
     ( monadicIO )
 import Test.Utils.Paths
@@ -409,6 +411,10 @@ spec = parallel $ do
 
 sqliteSpecSeq :: Spec
 sqliteSpecSeq = do
+    validateGenerator $ Proxy @GenTxHistory
+    validateGenerator $ Proxy @(PrimaryKey WalletId)
+    validateGenerator $ Proxy @(Wallet (SeqState 'Mainnet ShelleyKey))
+    validateGenerator $ Proxy @(KeyValPairs (PrimaryKey WalletId) (Wallet (SeqState 'Mainnet ShelleyKey), WalletMetadata))
     validateGenerators @(SeqState 'Mainnet ShelleyKey)
     before newMemoryDBLayer $ do
         parallel $ describe "Sqlite" properties

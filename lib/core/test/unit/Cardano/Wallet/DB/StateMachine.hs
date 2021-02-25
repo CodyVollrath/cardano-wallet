@@ -46,6 +46,7 @@ module Cardano.Wallet.DB.StateMachine
     ( prop_sequential
     , prop_parallel
     , validateGenerators
+    , validateGenerator -- TODO: Move
     , showLabelledExamples
     ) where
 
@@ -185,6 +186,8 @@ import Data.Time.Clock
     ( NominalDiffTime, diffUTCTime, getCurrentTime )
 import Data.TreeDiff
     ( ToExpr (..), defaultExprViaShow, genericToExpr )
+import Data.Typeable
+    ( Proxy (..), Typeable, typeRep )
 import GHC.Generics
     ( Generic )
 import System.Random
@@ -1290,33 +1293,45 @@ prop_parallel db =
             cmds' = addCleanDB cmds
         prettyParallelCommands cmds =<< runParallelCommands sm' cmds'
 
+
+validateGenerator :: forall a. (Arbitrary a, Typeable a) => Proxy a -> SpecWith ()
+validateGenerator proxy = validateGenerator' name (arbitrary @a) shrink
+  where
+    name = show $ typeRep proxy
+
 -- Controls that generators and shrinkers can run within a reasonable amount of
 -- time. We have been bitten several times already by generators which took much
 -- longer than what they should, causing timeouts in the test suite.
-validateGenerators
-    :: forall s. (Arbitrary (Wallet s), GenState s)
-    => SpecWith ()
-validateGenerators = describe "Validate generators & shrinkers" $ do
-    forM_ allGenerators $ \(name, (_frequency, gen)) -> do
+validateGenerator' :: String -> Gen a -> (a -> [a]) -> SpecWith ()
+validateGenerator' name gen shrink' = describe "Validate generators & shrinkers" $ do
         let titleGen = "Generator for " <> name
-        it titleGen $ expectWithin 1
+        it titleGen $ expectWithin 2
             (pure gen)
             sanityCheckGen
 
         let titleShrink = "Shrinker for " <> name
-        it titleShrink $ expectWithin 1
+        it titleShrink $ expectWithin 2
             -- NOTE: 97 is prime, i.e. not likely a multiple of any 'scale' or
             -- 'resize' arguments already given to underlying generators.
-            (generate (resize 97 gen))
-            (sanityCheckShrink . pure . At)
+            (pure <$> generate (resize 97 gen))
+            sanityCheckShrink
+
   where
+    sanityCheckGen g = do
+        cmds <- generate (sequence [ resize s g | s <- [0 .. 999] ])
+        void . traverse evaluate $ cmds
+
+    sanityCheckShrink = \case
+        []  -> pure ()
+        [x] -> sanityCheckShrink (concatMap shrink' [x])
+        xs  -> sanityCheckShrink (concatMap shrink' [head xs, last xs])
     expectWithin :: NominalDiffTime -> IO a -> (a -> IO ()) -> IO ()
     expectWithin delay pre action = do
         let n = 100
         start <- getCurrentTime
         ticks <- replicateM n $ do
             a <- pre
-            race_ (threadDelay (toMicro delay)) (action a)
+            race_ (threadDelay (10 * toMicro delay)) (action a)
             getCurrentTime
         let times = zipWith diffUTCTime ticks (start:ticks)
         let avg = (sum (fromEnum <$> times)) `div` n
@@ -1334,17 +1349,16 @@ validateGenerators = describe "Validate generators & shrinkers" $ do
         withConfidence :: Int -> Int
         withConfidence x = x * 12 `div` 10
 
+validateGenerators
+    :: forall s. (Arbitrary (Wallet s), GenState s, Typeable s)
+    => SpecWith ()
+validateGenerators = do
+    forM_ allGenerators $ \(name, (_frequency, gen)) -> do
+        validateGenerator' name (At <$> gen) shrinker
+  where
     allGenerators = generatorWithoutId @s ++ generatorWithWid @s wids
       where wids = QSM.reference . unMockWid . MWid <$> ["a", "b", "c"]
 
-    sanityCheckGen gen = do
-        cmds <- generate (sequence [ resize s gen | s <- [0 .. 999] ])
-        void . traverse evaluate $ cmds
-
-    sanityCheckShrink = \case
-        []  -> pure ()
-        [x] -> sanityCheckShrink (concatMap shrinker [x])
-        xs  -> sanityCheckShrink (concatMap shrinker [head xs, last xs])
 
 -- | The commands for parallel tests are run multiple times to detect
 -- concurrency problems. We need to clean the database before every run. The
