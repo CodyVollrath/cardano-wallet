@@ -8,6 +8,7 @@
         "primitive-addr" = (((hackage.primitive-addr)."0.1.0.2").revisions).default;
         "quickcheck-classes" = (((hackage.quickcheck-classes)."0.6.4.0").revisions).default;
         "quickcheck-classes-base" = (((hackage.quickcheck-classes-base)."0.6.1.0").revisions).default;
+        "bytestring-arbitrary" = (((hackage.bytestring-arbitrary)."0.1.3").revisions).default;
         "servant" = (((hackage.servant)."0.17").revisions).default;
         "servant-server" = (((hackage.servant-server)."0.17").revisions).default;
         "servant-client-core" = (((hackage.servant-client-core)."0.17").revisions).default;

@@ -132,6 +132,7 @@
             (hsPkgs."cardano-wallet-launcher" or (errorHandler.buildDepError "cardano-wallet-launcher"))
             (hsPkgs."cardano-wallet-test-utils" or (errorHandler.buildDepError "cardano-wallet-test-utils"))
             (hsPkgs."cardano-slotting" or (errorHandler.buildDepError "cardano-slotting"))
+            (hsPkgs."bytestring-arbitrary" or (errorHandler.buildDepError "bytestring-arbitrary"))
             (hsPkgs."cborg" or (errorHandler.buildDepError "cborg"))
             (hsPkgs."connection" or (errorHandler.buildDepError "connection"))
             (hsPkgs."containers" or (errorHandler.buildDepError "containers"))
