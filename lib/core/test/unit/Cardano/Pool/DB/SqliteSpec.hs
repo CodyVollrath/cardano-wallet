@@ -14,9 +14,9 @@ module Cardano.Pool.DB.SqliteSpec
 import Prelude
 
 import Cardano.BM.Trace
-    ( traceInTVarIO )
+    ( nullTracer, traceInTVarIO )
 import Cardano.DB.Sqlite
-    ( DBLog (..), SqliteContext )
+    ( DBLog (..) )
 import Cardano.Pool.DB
     ( DBLayer (..) )
 import Cardano.Pool.DB.Log
@@ -32,7 +32,7 @@ import System.Directory
 import System.FilePath
     ( (</>) )
 import Test.Hspec
-    ( Spec, before, describe, it, shouldBe )
+    ( Spec, around, before, describe, it, shouldBe )
 import Test.Hspec.Extra
     ( parallel )
 import Test.Utils.Paths
@@ -44,21 +44,24 @@ import UnliftIO.STM
 import UnliftIO.Temporary
     ( withSystemTempDirectory )
 
--- | Set up a DBLayer for testing, with the command context, and the logging
--- variable.
-newMemoryDBLayer :: IO (DBLayer IO)
-newMemoryDBLayer = snd . snd <$> newMemoryDBLayer'
+withMemoryDBLayer
+    :: (DBLayer IO -> IO a)
+    -> IO a
+withMemoryDBLayer = withDBLayer nullTracer Nothing dummyTimeInterpreter
 
-newMemoryDBLayer' :: IO (TVar [PoolDbLog], (SqliteContext, DBLayer IO))
-newMemoryDBLayer' = do
+withMemoryDBLayer'
+    :: ((TVar [PoolDbLog], DBLayer IO) -> IO a)
+    -> IO a
+withMemoryDBLayer' act = do
     logVar <- newTVarIO []
-    (logVar, ) <$> newDBLayer (traceInTVarIO logVar) Nothing ti
+    withDBLayer (traceInTVarIO logVar) Nothing ti $ \db -> do
+        act (logVar, db)
   where
     ti = dummyTimeInterpreter
 
 spec :: Spec
 spec = parallel $ do
-    before newMemoryDBLayer $ do
+    around withMemoryDBLayer $ do
         parallel $ describe "Sqlite" properties
 
     describe "Migration Regressions" $ do
